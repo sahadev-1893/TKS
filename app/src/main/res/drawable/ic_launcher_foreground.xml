@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Steam lines -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FCE4C8"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M44,30 C42,26 46,23 44,19" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FCE4C8"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M54,29 C52,24 57,21 54,16" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FCE4C8"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M64,30 C62,26 66,23 64,19" />
+
+    <!-- Tea cup body -->
+    <path
+        android:fillColor="#FFF4E6"
+        android:pathData="M33,37 L75,37 C75,37 73,68 54,68 C35,68 33,37 33,37 Z" />
+
+    <!-- Cup Rim & Chai surface -->
+    <path
+        android:fillColor="#E07A27"
+        android:pathData="M35,39 L73,39 C72,46 36,46 35,39 Z" />
+
+    <!-- Handle -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFF4E6"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M72,42 C81,43 83,56 70,59" />
+
+    <!-- Saucer plate -->
+    <path
+        android:fillColor="#E6A15C"
+        android:pathData="M26,71 C36,76 72,76 82,71 C84,72 80,77 54,77 C28,77 24,72 26,71 Z" />
+    <path
+        android:fillColor="#FCE4C8"
+        android:pathData="M28,70 C36,73 72,73 80,70 C81,71 75,73 54,73 C33,73 27,71 28,70 Z" />
+
+    <!-- Decorative tea star / spice badge -->
+    <path
+        android:fillColor="#E07A27"
+        android:pathData="M54,49 L55.8,53.2 L60.2,53.2 L56.6,55.8 L58,60.2 L54,57.4 L50,60.2 L51.4,55.8 L47.8,53.2 L52.2,53.2 Z" />
+</vector>

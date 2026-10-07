@@ -1,0 +1,7 @@
+{
+  "name": "Tuna Kaka Tea Stall",
+  "description": "Customer, Order & Payment Management System for Tuna Kaka Tea Stall with ledger, daily reports, and WhatsApp sharing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
