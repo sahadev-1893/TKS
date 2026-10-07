@@ -6,14 +6,12 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.dao.CustomerDao
+import com.example.data.dao.CustomerLedgerDao
+import com.example.data.dao.InventoryDao
 import com.example.data.dao.MenuItemDao
 import com.example.data.dao.OrderDao
 import com.example.data.dao.PaymentDao
-import com.example.data.entity.Customer
-import com.example.data.entity.MenuItem
-import com.example.data.entity.Order
-import com.example.data.entity.OrderItem
-import com.example.data.entity.Payment
+import com.example.data.entity.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -24,9 +22,12 @@ import kotlinx.coroutines.launch
         MenuItem::class,
         Order::class,
         OrderItem::class,
-        Payment::class
+        Payment::class,
+        CustomerLedgerEntry::class,
+        InventoryItem::class,
+        InventoryConsumptionLog::class
     ],
-    version = 1,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +36,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun menuItemDao(): MenuItemDao
     abstract fun orderDao(): OrderDao
     abstract fun paymentDao(): PaymentDao
+    abstract fun customerLedgerDao(): CustomerLedgerDao
+    abstract fun inventoryDao(): InventoryDao
 
     companion object {
         @Volatile
@@ -47,6 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "tuna_kaka_tea_stall.db"
                 )
+                    .fallbackToDestructiveMigration()
                     .addCallback(AppDatabaseCallback(scope))
                     .build()
                 INSTANCE = instance
@@ -72,6 +76,19 @@ abstract class AppDatabase : RoomDatabase() {
             val customerDao = db.customerDao()
             val orderDao = db.orderDao()
             val paymentDao = db.paymentDao()
+            val ledgerDao = db.customerLedgerDao()
+            val inventoryDao = db.inventoryDao()
+
+            // 0. Prepopulate Raw Material Inventory
+            val defaultInventory = listOf(
+                InventoryItem(name = "Milk", unit = "Liters (L)", currentStock = 18.0, lowStockThreshold = 5.0, costPerUnit = 60.0),
+                InventoryItem(name = "Tea Leaves (Chai Patti)", unit = "Kilograms (kg)", currentStock = 6.5, lowStockThreshold = 2.0, costPerUnit = 320.0),
+                InventoryItem(name = "Sugar (Chini)", unit = "Kilograms (kg)", currentStock = 9.0, lowStockThreshold = 3.0, costPerUnit = 45.0),
+                InventoryItem(name = "Fresh Ginger (Adrak)", unit = "Kilograms (kg)", currentStock = 2.5, lowStockThreshold = 1.0, costPerUnit = 120.0),
+                InventoryItem(name = "Cardamom (Elaichi)", unit = "Grams (g)", currentStock = 200.0, lowStockThreshold = 50.0, costPerUnit = 2.5),
+                InventoryItem(name = "Paper Cups (Kulhad)", unit = "Pieces (pcs)", currentStock = 450.0, lowStockThreshold = 100.0, costPerUnit = 0.8)
+            )
+            inventoryDao.insertAll(defaultInventory)
 
             // 1. Prepopulate default menu items
             val defaultItems = listOf(
@@ -131,21 +148,22 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             )
 
-            // 3. Prepopulate sample orders for today & recent days
-            // Ramesh Order 1: Today
+            // 3. Prepopulate sample orders and ledger entries for Ramesh
+            // Ramesh Order 1: 2 days ago
+            val ord1Time = now - (2 * oneDayMs)
             val ord1 = orderDao.insertOrder(
                 Order(
                     orderNumber = "ORD-1001",
                     customerId = c1Id,
                     customerName = "Ramesh",
                     customerMobile = "9876543210",
-                    orderDate = now,
+                    orderDate = ord1Time,
                     totalAmount = 80.0,
                     paidAmount = 50.0,
                     balanceAmount = 30.0,
                     paymentMethod = "Cash",
                     status = "PARTIAL",
-                    notes = "Paid 50 cash, 30 pending"
+                    notes = "2 Tea + 1 Masala Tea + 2 Samosa + 1 Biscuit"
                 )
             )
             orderDao.insertOrderItems(
@@ -161,10 +179,93 @@ abstract class AppDatabase : RoomDatabase() {
                     customerId = c1Id,
                     customerName = "Ramesh",
                     orderId = ord1,
-                    paymentDate = now,
+                    paymentDate = ord1Time,
                     amount = 50.0,
                     paymentMethod = "Cash",
                     notes = "Order ORD-1001 down payment"
+                )
+            )
+            // Ledger: Debit 80, Credit 50
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c1Id,
+                    date = ord1Time,
+                    transactionType = "DEBIT",
+                    amount = 80.0,
+                    title = "Order #ORD-1001",
+                    details = "Tea (2), Masala Tea (1), Samosa (2), Biscuit (1)",
+                    paymentMode = "Credit Sale",
+                    referenceNo = "ORD-1001"
+                )
+            )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c1Id,
+                    date = ord1Time,
+                    transactionType = "CREDIT",
+                    amount = 50.0,
+                    title = "Cash Payment",
+                    details = "Down payment for ORD-1001",
+                    paymentMode = "Cash",
+                    referenceNo = "ORD-1001"
+                )
+            )
+
+            // Ramesh Order 2: Today
+            val ord1b = orderDao.insertOrder(
+                Order(
+                    orderNumber = "ORD-1004",
+                    customerId = c1Id,
+                    customerName = "Ramesh",
+                    customerMobile = "9876543210",
+                    orderDate = now,
+                    totalAmount = 50.0,
+                    paidAmount = 20.0,
+                    balanceAmount = 30.0,
+                    paymentMethod = "Cash",
+                    status = "PARTIAL",
+                    notes = "Tea + Biscuit"
+                )
+            )
+            orderDao.insertOrderItems(
+                listOf(
+                    OrderItem(orderId = ord1b, itemName = "Tea", quantity = 3, rate = 10.0, amount = 30.0),
+                    OrderItem(orderId = ord1b, itemName = "Biscuit", quantity = 2, rate = 10.0, amount = 20.0)
+                )
+            )
+            paymentDao.insertPayment(
+                Payment(
+                    customerId = c1Id,
+                    customerName = "Ramesh",
+                    orderId = ord1b,
+                    paymentDate = now,
+                    amount = 20.0,
+                    paymentMethod = "Cash",
+                    notes = "Order ORD-1004 partial payment"
+                )
+            )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c1Id,
+                    date = now,
+                    transactionType = "DEBIT",
+                    amount = 50.0,
+                    title = "Order #ORD-1004",
+                    details = "Tea (3), Biscuit (2)",
+                    paymentMode = "Credit Sale",
+                    referenceNo = "ORD-1004"
+                )
+            )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c1Id,
+                    date = now,
+                    transactionType = "CREDIT",
+                    amount = 20.0,
+                    title = "Cash Payment",
+                    details = "Partial settlement",
+                    paymentMode = "Cash",
+                    referenceNo = "ORD-1004"
                 )
             )
 
@@ -202,6 +303,30 @@ abstract class AppDatabase : RoomDatabase() {
                     notes = "Order ORD-1002 PhonePe UPI"
                 )
             )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c2Id,
+                    date = now,
+                    transactionType = "DEBIT",
+                    amount = 180.0,
+                    title = "Order #ORD-1002",
+                    details = "Masala Tea (3), Samosa (4), Pakoda (3)",
+                    paymentMode = "Credit Sale",
+                    referenceNo = "ORD-1002"
+                )
+            )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c2Id,
+                    date = now,
+                    transactionType = "CREDIT",
+                    amount = 180.0,
+                    title = "PhonePe UPI Settlement",
+                    details = "Instant UPI payment",
+                    paymentMode = "UPI",
+                    referenceNo = "ORD-1002"
+                )
+            )
 
             // Mohan Order: Today, partial payment
             val ord3 = orderDao.insertOrder(
@@ -237,6 +362,30 @@ abstract class AppDatabase : RoomDatabase() {
                     amount = 250.0,
                     paymentMethod = "Google Pay",
                     notes = "Order ORD-1003 GPay"
+                )
+            )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c3Id,
+                    date = now,
+                    transactionType = "DEBIT",
+                    amount = 350.0,
+                    title = "Order #ORD-1003",
+                    details = "Maggi (2), Coffee (4), Pakoda (5), Cold Drink (2), Chips (2)",
+                    paymentMode = "Credit Sale",
+                    referenceNo = "ORD-1003"
+                )
+            )
+            ledgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = c3Id,
+                    date = now,
+                    transactionType = "CREDIT",
+                    amount = 250.0,
+                    title = "Google Pay Payment",
+                    details = "GPay payment towards ORD-1003",
+                    paymentMode = "Google Pay",
+                    referenceNo = "ORD-1003"
                 )
             )
         }

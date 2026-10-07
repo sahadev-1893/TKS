@@ -1,17 +1,9 @@
 package com.example.data
 
-import com.example.data.dao.CustomerDao
-import com.example.data.dao.MenuItemDao
-import com.example.data.dao.OrderDao
-import com.example.data.dao.PaymentDao
-import com.example.data.entity.Customer
-import com.example.data.entity.MenuItem
-import com.example.data.entity.Order
-import com.example.data.entity.OrderItem
-import com.example.data.entity.Payment
+import com.example.data.dao.*
+import com.example.data.entity.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 
 data class CustomerWithSummary(
     val customer: Customer,
@@ -22,21 +14,13 @@ data class CustomerWithSummary(
     val lastOrderDate: Long?
 )
 
-data class LedgerEntry(
-    val date: Long,
-    val type: String, // "ORDER" or "PAYMENT"
-    val referenceNumber: String,
-    val itemsSummary: String,
-    val debitAmount: Double, // Order total
-    val creditAmount: Double, // Payment made
-    val balanceAfter: Double
-)
-
 class TeaStallRepository(
     private val customerDao: CustomerDao,
     private val menuItemDao: MenuItemDao,
     private val orderDao: OrderDao,
-    private val paymentDao: PaymentDao
+    private val paymentDao: PaymentDao,
+    private val customerLedgerDao: CustomerLedgerDao,
+    private val inventoryDao: InventoryDao
 ) {
     // Customers
     val allCustomers: Flow<List<Customer>> = customerDao.getAllCustomers()
@@ -79,6 +63,25 @@ class TeaStallRepository(
         val itemsWithId = items.map { it.copy(orderId = orderId) }
         orderDao.insertOrderItems(itemsWithId)
 
+        val itemsSummary = if (items.isNotEmpty()) {
+            items.joinToString(", ") { "${it.itemName} (${it.quantity})" }
+        } else "Tea Stall Order"
+
+        // 1. Debit Entry for the Order
+        customerLedgerDao.insertEntry(
+            CustomerLedgerEntry(
+                customerId = order.customerId,
+                date = order.orderDate,
+                transactionType = "DEBIT",
+                amount = order.totalAmount,
+                title = "Order #${order.orderNumber.ifBlank { "$orderId" }}",
+                details = itemsSummary,
+                paymentMode = "Credit Sale",
+                referenceNo = order.orderNumber.ifBlank { "ORD-$orderId" }
+            )
+        )
+
+        // 2. Immediate Credit Entry if paid
         if (immediatePaymentAmount > 0) {
             paymentDao.insertPayment(
                 Payment(
@@ -89,6 +92,19 @@ class TeaStallRepository(
                     amount = immediatePaymentAmount,
                     paymentMethod = paymentMethod,
                     notes = "Payment for ${order.orderNumber.ifBlank { "Order #$orderId" }}"
+                )
+            )
+
+            customerLedgerDao.insertEntry(
+                CustomerLedgerEntry(
+                    customerId = order.customerId,
+                    date = order.orderDate,
+                    transactionType = "CREDIT",
+                    amount = immediatePaymentAmount,
+                    title = "Payment received",
+                    details = "Paid for ${order.orderNumber.ifBlank { "Order #$orderId" }}",
+                    paymentMode = paymentMethod,
+                    referenceNo = order.orderNumber.ifBlank { "ORD-$orderId" }
                 )
             )
         }
@@ -106,8 +122,130 @@ class TeaStallRepository(
     fun getPaymentsByCustomer(customerId: Long): Flow<List<Payment>> =
         paymentDao.getPaymentsByCustomer(customerId)
 
-    suspend fun recordPayment(payment: Payment): Long = paymentDao.insertPayment(payment)
+    suspend fun recordPayment(payment: Payment): Long {
+        val payId = paymentDao.insertPayment(payment)
+        customerLedgerDao.insertEntry(
+            CustomerLedgerEntry(
+                customerId = payment.customerId,
+                date = payment.paymentDate,
+                transactionType = "CREDIT",
+                amount = payment.amount,
+                title = "Payment received",
+                details = payment.notes.ifBlank { "Settlement" },
+                paymentMode = payment.paymentMethod,
+                referenceNo = "PAY-$payId"
+            )
+        )
+        return payId
+    }
+
     suspend fun deletePayment(payment: Payment) = paymentDao.deletePayment(payment)
+
+    // Customer Ledger (Credit & Debit Tracking)
+    fun getLedgerForCustomer(customerId: Long): Flow<List<CustomerLedgerEntry>> =
+        customerLedgerDao.getEntriesForCustomer(customerId)
+
+    suspend fun addLedgerDebit(
+        customerId: Long,
+        amount: Double,
+        title: String,
+        details: String,
+        date: Long = System.currentTimeMillis()
+    ): Long {
+        return customerLedgerDao.insertEntry(
+            CustomerLedgerEntry(
+                customerId = customerId,
+                date = date,
+                transactionType = "DEBIT",
+                amount = amount,
+                title = title.ifBlank { "Debit / Udhar" },
+                details = details,
+                paymentMode = "Credit Sale",
+                referenceNo = "DEB-${System.currentTimeMillis() % 100000}"
+            )
+        )
+    }
+
+    suspend fun addLedgerCredit(
+        customerId: Long,
+        amount: Double,
+        title: String,
+        details: String,
+        paymentMode: String = "Cash",
+        date: Long = System.currentTimeMillis()
+    ): Long {
+        return customerLedgerDao.insertEntry(
+            CustomerLedgerEntry(
+                customerId = customerId,
+                date = date,
+                transactionType = "CREDIT",
+                amount = amount,
+                title = title.ifBlank { "Payment / Jama" },
+                details = details,
+                paymentMode = paymentMode,
+                referenceNo = "CRE-${System.currentTimeMillis() % 100000}"
+            )
+        )
+    }
+
+    suspend fun updateLedgerEntry(entry: CustomerLedgerEntry) =
+        customerLedgerDao.updateEntry(entry)
+
+    suspend fun deleteLedgerEntry(entry: CustomerLedgerEntry) =
+        customerLedgerDao.deleteEntry(entry)
+
+    // Inventory & Raw Material Tracking (Milk, Tea Leaves, Sugar, etc.)
+    val allInventoryItems: Flow<List<InventoryItem>> = inventoryDao.getAllInventoryItems()
+    val lowStockItems: Flow<List<InventoryItem>> = inventoryDao.getLowStockItems()
+    val recentInventoryLogs: Flow<List<InventoryConsumptionLog>> = inventoryDao.getRecentLogs()
+
+    suspend fun insertInventoryItem(item: InventoryItem): Long = inventoryDao.insertItem(item)
+    suspend fun updateInventoryItem(item: InventoryItem) = inventoryDao.updateItem(item)
+    suspend fun deleteInventoryItem(item: InventoryItem) = inventoryDao.deleteItem(item)
+
+    suspend fun recordConsumption(
+        itemId: Long,
+        quantity: Double,
+        notes: String
+    ): Boolean {
+        val item = inventoryDao.getItemById(itemId) ?: return false
+        val newStock = (item.currentStock - quantity).coerceAtLeast(0.0)
+        inventoryDao.updateItem(item.copy(currentStock = newStock, lastUpdated = System.currentTimeMillis()))
+        inventoryDao.insertLog(
+            InventoryConsumptionLog(
+                itemId = item.id,
+                itemName = item.name,
+                quantity = quantity,
+                unit = item.unit,
+                type = "CONSUMPTION",
+                remainingStockAfter = newStock,
+                notes = notes
+            )
+        )
+        return true
+    }
+
+    suspend fun recordRestock(
+        itemId: Long,
+        quantity: Double,
+        notes: String
+    ): Boolean {
+        val item = inventoryDao.getItemById(itemId) ?: return false
+        val newStock = item.currentStock + quantity
+        inventoryDao.updateItem(item.copy(currentStock = newStock, lastUpdated = System.currentTimeMillis()))
+        inventoryDao.insertLog(
+            InventoryConsumptionLog(
+                itemId = item.id,
+                itemName = item.name,
+                quantity = quantity,
+                unit = item.unit,
+                type = "RESTOCK",
+                remainingStockAfter = newStock,
+                notes = notes
+            )
+        )
+        return true
+    }
 
     // Combined: Customers with balances and order totals
     val customersWithSummary: Flow<List<CustomerWithSummary>> =

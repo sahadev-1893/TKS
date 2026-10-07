@@ -65,4 +65,39 @@ class ExampleUnitTest {
         assertTrue(report.contains("Suresh"))
         assertTrue(report.contains("Mohan"))
     }
+
+    @Test
+    fun testWhatsAppCustomerBalanceAndSummaryMessage() {
+        val message = WhatsAppUtils.generateCustomerBalanceAndSummaryMessage(
+            customerName = "Ramesh",
+            mobile = "9876543210",
+            currentBalance = 60.0,
+            totalPurchases = 130.0,
+            totalPaid = 70.0,
+            recentTransactions = listOf(
+                "01/10/2026: Tea (2) + Samosa (2) - Total: ₹80 | Paid: ₹50 | Due: ₹30",
+                "03/10/2026: Tea (1) + Biscuit (2) - Total: ₹50 | Paid: ₹20 | Due: ₹30"
+            )
+        )
+        assertTrue(message.contains("TUNA KAKA TEA STALL"))
+        assertTrue(message.contains("Dear *Ramesh*"))
+        assertTrue(message.contains("CURRENT OUTSTANDING BALANCE:* ₹60"))
+        assertTrue(message.contains("Total Purchases:* ₹130"))
+        assertTrue(message.contains("Total Paid:* ₹70"))
+        assertTrue(message.contains("RECENT TRANSACTIONS"))
+        assertTrue(message.contains("Tea (2) + Samosa (2)"))
+    }
+
+    @Test
+    fun testSupabasePostgresSqlSchemaGeneration() {
+        val schema = com.example.data.supabase.SupabaseSyncService.generatePostgresSqlSchema()
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS public.customers"))
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS public.menu_items"))
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS public.orders"))
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS public.payments"))
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS public.customer_ledger"))
+        assertTrue(schema.contains("CREATE TABLE IF NOT EXISTS public.inventory_items"))
+        assertTrue(schema.contains("ROW LEVEL SECURITY"))
+        assertTrue(schema.contains("Allow anon all on customers"))
+    }
 }

@@ -268,9 +268,18 @@ fun OutstandingReportScreen(
 
                                 Button(
                                     onClick = {
-                                        val reminderText = WhatsAppUtils.generateCustomerReminder(
+                                        val summaryLines = listOfNotNull(
+                                            item.lastOrderDate?.let {
+                                                "Last Order (${FormatUtils.formatDate(it)}): Purchases ${FormatUtils.formatRupees(item.totalAmount)} | Paid ${FormatUtils.formatRupees(item.totalPaid)}"
+                                            }
+                                        )
+                                        val reminderText = WhatsAppUtils.generateCustomerBalanceAndSummaryMessage(
                                             customerName = c.name,
-                                            balanceAmount = item.balance
+                                            mobile = c.mobile,
+                                            currentBalance = item.balance,
+                                            totalPurchases = item.totalAmount,
+                                            totalPaid = item.totalPaid,
+                                            recentTransactions = summaryLines
                                         )
                                         WhatsAppUtils.shareToWhatsApp(context, reminderText, c.mobile)
                                     },

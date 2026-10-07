@@ -22,9 +22,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.entity.Order
 import com.example.ui.AppScreen
+import com.example.ui.DailySalesTrend
 import com.example.ui.DashboardSummary
 import com.example.ui.components.StatCard
 import com.example.ui.components.StatusBadge
+import com.example.ui.components.WeeklySalesLineChart
+import com.example.data.supabase.SupabaseConfig
 import com.example.ui.theme.*
 import com.example.util.FormatUtils
 
@@ -32,6 +35,10 @@ import com.example.util.FormatUtils
 fun DashboardScreen(
     summary: DashboardSummary,
     recentOrders: List<Order>,
+    weeklyTrends: List<DailySalesTrend>,
+    lowStockCount: Int = 0,
+    supabaseConfig: SupabaseConfig? = null,
+    onQuickSync: (() -> Unit)? = null,
     onNavigate: (AppScreen) -> Unit,
     onOpenWhatsAppReport: () -> Unit,
     onOpenReceivePayment: () -> Unit,
@@ -240,6 +247,180 @@ fun DashboardScreen(
                         Text("WHATSAPP", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
                     }
                 }
+
+                // Inventory & Raw Material Quick Button
+                OutlinedButton(
+                    onClick = { onNavigate(AppScreen.INVENTORY) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .testTag("action_open_inventory"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Inventory2, contentDescription = null, tint = ChaiPrimary, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("MANAGE INVENTORY (MILK, TEA LEAVES, SUGAR)", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = ChaiPrimary)
+                    if (lowStockCount > 0) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = BalanceRed,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = "$lowStockCount LOW",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Low Stock Urgent Alert Card on Dashboard
+        if (lowStockCount > 0) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = BalanceRedLight),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigate(AppScreen.INVENTORY) }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = BalanceRed, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "LOW STOCK WARNING",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
+                                    color = BalanceRed
+                                )
+                                Text(
+                                    text = "$lowStockCount raw materials need immediate restocking",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ChaiTextPrimary
+                                )
+                            }
+                        }
+
+                        FilledTonalButton(
+                            onClick = { onNavigate(AppScreen.INVENTORY) },
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = BalanceRed, contentColor = Color.White)
+                        ) {
+                            Text("RESTOCK", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Supabase Cloud Card
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (supabaseConfig?.isConnected == true) PaidGreenLight else ChaiCardWarm
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigate(AppScreen.SUPABASE_SYNC) }
+                    .testTag("dashboard_supabase_card")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(if (supabaseConfig?.isConnected == true) PaidGreen else ChaiSecondary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (supabaseConfig?.isConnected == true) Icons.Default.CloudDone else Icons.Default.CloudQueue,
+                                contentDescription = "Supabase Status",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "SUPABASE CLOUD SYNC",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
+                                    color = if (supabaseConfig?.isConnected == true) PaidGreen else ChaiPrimary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (supabaseConfig?.isConnected == true) PaidGreen.copy(alpha = 0.15f) else ChaiBorder
+                                ) {
+                                    Text(
+                                        text = if (supabaseConfig?.isConnected == true) "CONNECTED" else if (supabaseConfig?.isConfigured == true) "CONFIGURED" else "NOT CONNECTED",
+                                        color = if (supabaseConfig?.isConnected == true) PaidGreen else ChaiTextSecondary,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if ((supabaseConfig?.lastSyncTimestamp ?: 0L) > 0)
+                                    "Last synced: ${FormatUtils.formatDateTime(supabaseConfig!!.lastSyncTimestamp)}"
+                                else
+                                    "Tap to sync database with Supabase cloud",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ChaiTextSecondary,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (onQuickSync != null && supabaseConfig?.isConfigured == true) {
+                            Button(
+                                onClick = onQuickSync,
+                                modifier = Modifier.height(36.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (supabaseConfig.isConnected) PaidGreen else ChaiPrimary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp)
+                            ) {
+                                Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("SYNC", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onNavigate(AppScreen.SUPABASE_SYNC) },
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp)
+                            ) {
+                                Text("CONNECT", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -364,6 +545,11 @@ fun DashboardScreen(
                     }
                 }
             }
+        }
+
+        // 7-Day Tea Sales & Revenue Trend Chart
+        item {
+            WeeklySalesLineChart(trends = weeklyTrends)
         }
 
         // Recent Orders Header

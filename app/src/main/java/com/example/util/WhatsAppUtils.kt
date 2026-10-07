@@ -56,6 +56,50 @@ object WhatsAppUtils {
                 "Thank you."
     }
 
+    fun generateCustomerBalanceAndSummaryMessage(
+        customerName: String,
+        mobile: String,
+        currentBalance: Double,
+        totalPurchases: Double,
+        totalPaid: Double,
+        recentTransactions: List<String>
+    ): String {
+        val sb = StringBuilder()
+        val todayStr = FormatUtils.formatDate(System.currentTimeMillis())
+        sb.append("☕ *TUNA KAKA TEA STALL*\n")
+        sb.append("📋 *ACCOUNT STATEMENT & BALANCE SUMMARY*\n")
+        sb.append("Date: $todayStr\n\n")
+        sb.append("Dear *$customerName*,\n")
+        sb.append("Here is your current transaction summary with Tuna Kaka Tea Stall:\n\n")
+        sb.append("━━━━━━━━━━━━━━━━\n")
+        sb.append("⚠️ *CURRENT OUTSTANDING BALANCE:* ${FormatUtils.formatRupees(currentBalance)}\n")
+        sb.append("━━━━━━━━━━━━━━━━\n")
+        sb.append("💰 *Total Purchases:* ${FormatUtils.formatRupees(totalPurchases)}\n")
+        sb.append("💵 *Total Paid:* ${FormatUtils.formatRupees(totalPaid)}\n")
+        sb.append("━━━━━━━━━━━━━━━━\n\n")
+
+        if (recentTransactions.isNotEmpty()) {
+            sb.append("*RECENT TRANSACTIONS:*\n")
+            recentTransactions.take(6).forEach { txn ->
+                sb.append("• $txn\n")
+            }
+            sb.append("\n")
+        }
+
+        if (currentBalance > 0) {
+            sb.append("━━━━━━━━━━━━━━━━\n")
+            sb.append("Kindly settle the pending balance of *${FormatUtils.formatRupees(currentBalance)}* at your earliest convenience.\n")
+            sb.append("📱 Accepted payment modes: Cash, UPI, Google Pay, PhonePe & Paytm.\n\n")
+        } else {
+            sb.append("━━━━━━━━━━━━━━━━\n")
+            sb.append("✅ Your account is completely settled. Thank you!\n\n")
+        }
+
+        sb.append("Thank you for visiting\n")
+        sb.append("*Tuna Kaka Tea Stall* ☕")
+        return sb.toString()
+    }
+
     fun generateCustomerLedgerMessage(
         customerName: String,
         mobile: String,
@@ -64,24 +108,14 @@ object WhatsAppUtils {
         balance: Double,
         lines: List<String>
     ): String {
-        val sb = StringBuilder()
-        sb.append("☕ *TUNA KAKA TEA STALL*\n")
-        sb.append("📋 *CUSTOMER ACCOUNT LEDGER*\n")
-        sb.append("Customer: *$customerName* (${if (mobile.isNotBlank()) mobile else "N/A"})\n\n")
-        sb.append("━━━━━━━━━━━━━━━━\n\n")
-        if (lines.isNotEmpty()) {
-            lines.forEach { line ->
-                sb.append("• $line\n")
-            }
-            sb.append("\n")
-        }
-        sb.append("━━━━━━━━━━━━━━━━\n")
-        sb.append("💰 *Total Purchases:* ${FormatUtils.formatRupees(totalAmount)}\n")
-        sb.append("💵 *Total Paid:* ${FormatUtils.formatRupees(totalPaid)}\n")
-        sb.append("⚠️ *Outstanding Balance:* ${FormatUtils.formatRupees(balance)}\n")
-        sb.append("━━━━━━━━━━━━━━━━\n\n")
-        sb.append("Thank you!\n*Tuna Kaka Tea Stall* ☕")
-        return sb.toString()
+        return generateCustomerBalanceAndSummaryMessage(
+            customerName = customerName,
+            mobile = mobile,
+            currentBalance = balance,
+            totalPurchases = totalAmount,
+            totalPaid = totalPaid,
+            recentTransactions = lines
+        )
     }
 
     fun shareToWhatsApp(context: Context, text: String, phone: String? = null) {
@@ -110,14 +144,13 @@ object WhatsAppUtils {
             }
             context.startActivity(sendIntent)
         } catch (_: Exception) {
-            // General share chooser fallback
             try {
                 val chooserIntent = Intent(Intent.ACTION_SEND).apply {
                     this.type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, text)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                context.startActivity(Intent.createChooser(chooserIntent, "Share Report"))
+                context.startActivity(Intent.createChooser(chooserIntent, "Share via WhatsApp"))
             } catch (e: Exception) {
                 Toast.makeText(context, "Could not open sharing app", Toast.LENGTH_SHORT).show()
             }

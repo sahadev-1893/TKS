@@ -67,12 +67,17 @@ fun TunaKakaApp(viewModel: TeaStallViewModel) {
     val allOrders by viewModel.allOrders.collectAsStateWithLifecycle()
     val allPayments by viewModel.allPayments.collectAsStateWithLifecycle()
 
-    val ledgerData by viewModel.currentCustomerLedger.collectAsStateWithLifecycle()
+    val ledgerData by viewModel.currentCustomerLedgerData.collectAsStateWithLifecycle()
+    val weeklySalesTrends by viewModel.weeklySalesTrends.collectAsStateWithLifecycle()
     val dateFilterType by viewModel.dateFilterType.collectAsStateWithLifecycle()
     val customStartDate by viewModel.customStartDate.collectAsStateWithLifecycle()
     val customEndDate by viewModel.customEndDate.collectAsStateWithLifecycle()
     val dateWiseOrders by viewModel.dateWiseReportOrders.collectAsStateWithLifecycle()
     val closingReportDate by viewModel.closingReportDate.collectAsStateWithLifecycle()
+
+    val allInventoryItems by viewModel.allInventoryItems.collectAsStateWithLifecycle()
+    val lowStockItems by viewModel.lowStockItems.collectAsStateWithLifecycle()
+    val recentInventoryLogs by viewModel.recentInventoryLogs.collectAsStateWithLifecycle()
 
     // Order entry draft
     val orderCustomerId by viewModel.orderCustomerId.collectAsStateWithLifecycle()
@@ -170,6 +175,8 @@ fun TunaKakaApp(viewModel: TeaStallViewModel) {
                     Triple(AppScreen.CUSTOMERS, Icons.Default.People, "Customer Management"),
                     Triple(AppScreen.ORDER_ENTRY, Icons.Default.AddShoppingCart, "Daily Order Entry"),
                     Triple(AppScreen.ITEMS_MASTER, Icons.Default.RestaurantMenu, "Item Master"),
+                    Triple(AppScreen.INVENTORY, Icons.Default.Inventory, "Raw Material Inventory"),
+                    Triple(AppScreen.SUPABASE_SYNC, Icons.Default.CloudSync, "Supabase Cloud Sync"),
                     Triple(AppScreen.PAYMENTS, Icons.Default.Payments, "Payment Management"),
                     Triple(AppScreen.DATE_WISE_REPORT, Icons.Default.Assessment, "Date-Wise Report"),
                     Triple(AppScreen.DAILY_CLOSING, Icons.Default.ReceiptLong, "Daily Closing Report"),
@@ -247,6 +254,17 @@ fun TunaKakaApp(viewModel: TeaStallViewModel) {
                         }
 
                         IconButton(
+                            onClick = { viewModel.navigateTo(AppScreen.SUPABASE_SYNC) },
+                            modifier = Modifier.testTag("top_bar_supabase_sync")
+                        ) {
+                            Icon(
+                                imageVector = if (viewModel.supabaseConfig.isConnected) Icons.Default.CloudDone else Icons.Default.CloudSync,
+                                contentDescription = "Supabase Cloud Sync",
+                                tint = if (viewModel.supabaseConfig.isConnected) PaidGreen else ChaiPrimary
+                            )
+                        }
+
+                        IconButton(
                             onClick = { openWhatsAppDailyReport() },
                             modifier = Modifier.testTag("top_bar_whatsapp")
                         ) {
@@ -298,6 +316,22 @@ fun TunaKakaApp(viewModel: TeaStallViewModel) {
                         DashboardScreen(
                             summary = dashboardSummary,
                             recentOrders = allOrders,
+                            weeklyTrends = weeklySalesTrends,
+                            lowStockCount = lowStockItems.size,
+                            supabaseConfig = viewModel.supabaseConfig,
+                            onQuickSync = {
+                                Toast.makeText(context, "Syncing with Supabase cloud...", Toast.LENGTH_SHORT).show()
+                                viewModel.syncWithSupabase { result ->
+                                    when (result) {
+                                        is com.example.data.supabase.SupabaseSyncResult.Success -> {
+                                            Toast.makeText(context, "Supabase Cloud Sync completed!", Toast.LENGTH_SHORT).show()
+                                        }
+                                        is com.example.data.supabase.SupabaseSyncResult.Error -> {
+                                            Toast.makeText(context, "Sync error: ${result.error}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            },
                             onNavigate = { viewModel.navigateTo(it) },
                             onOpenWhatsAppReport = { openWhatsAppDailyReport() },
                             onOpenReceivePayment = {
@@ -375,6 +409,33 @@ fun TunaKakaApp(viewModel: TeaStallViewModel) {
                         )
                     }
 
+                    AppScreen.INVENTORY -> {
+                        InventoryManagementScreen(
+                            items = allInventoryItems,
+                            lowStockItems = lowStockItems,
+                            logs = recentInventoryLogs,
+                            onRecordConsumption = { itemId, qty, notes, onDone ->
+                                viewModel.recordDailyConsumption(itemId, qty, notes, onDone)
+                            },
+                            onRecordRestock = { itemId, qty, notes, onDone ->
+                                viewModel.recordRestock(itemId, qty, notes, onDone)
+                            },
+                            onSaveItem = { id, name, unit, stock, thresh, cost, onDone ->
+                                viewModel.saveInventoryItem(id, name, unit, stock, thresh, cost, onDone)
+                            },
+                            onDeleteItem = { item ->
+                                viewModel.deleteInventoryItem(item)
+                            }
+                        )
+                    }
+
+                    AppScreen.SUPABASE_SYNC -> {
+                        SupabaseSyncScreen(
+                            config = viewModel.supabaseConfig,
+                            syncService = viewModel.supabaseSyncService
+                        )
+                    }
+
                     AppScreen.PAYMENTS -> {
                         PaymentManagementScreen(
                             customers = customersWithSummary,
@@ -389,16 +450,22 @@ fun TunaKakaApp(viewModel: TeaStallViewModel) {
                     }
 
                     AppScreen.CUSTOMER_LEDGER -> {
-                        val (custSum, rows, payments) = ledgerData
                         CustomerLedgerScreen(
-                            customerSummary = custSum,
-                            ledgerRows = rows,
-                            payments = payments,
-                            onBack = { viewModel.navigateTo(AppScreen.CUSTOMERS) },
-                            onReceivePayment = { cust ->
-                                quickPaymentCustomer = cust
-                                quickPaymentAmount = cust.balance.toInt().toString()
-                            }
+                            ledgerData = ledgerData,
+                            allCustomers = customersWithSummary,
+                            onSelectCustomer = { custId ->
+                                viewModel.selectCustomerForLedger(custId)
+                            },
+                            onAddDebit = { custId, amt, title, details, onDone ->
+                                viewModel.addDebitTransaction(custId, amt, title, details, onDone)
+                            },
+                            onAddCredit = { custId, amt, title, details, mode, onDone ->
+                                viewModel.addCreditTransaction(custId, amt, title, details, mode, onDone)
+                            },
+                            onDeleteEntry = { entry ->
+                                viewModel.deleteLedgerEntry(entry)
+                            },
+                            onBack = { viewModel.navigateTo(AppScreen.CUSTOMERS) }
                         )
                     }
 

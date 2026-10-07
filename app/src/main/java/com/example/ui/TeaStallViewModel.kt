@@ -6,12 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.CustomerWithSummary
 import com.example.data.TeaStallRepository
-import com.example.data.entity.Customer
-import com.example.data.entity.MenuItem
-import com.example.data.entity.Order
-import com.example.data.entity.OrderItem
-import com.example.data.entity.Payment
+import com.example.data.entity.*
 import com.example.util.FormatUtils
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -23,6 +20,8 @@ enum class AppScreen(val title: String) {
     ITEMS_MASTER("Item Master"),
     PAYMENTS("Payment Management"),
     CUSTOMER_LEDGER("Customer Ledger"),
+    INVENTORY("Inventory & Raw Materials"),
+    SUPABASE_SYNC("Supabase Cloud Sync"),
     DATE_WISE_REPORT("Date-Wise Report"),
     DAILY_CLOSING("Daily Closing Report"),
     OUTSTANDING_REPORT("Outstanding Balances")
@@ -41,6 +40,15 @@ data class OrderItemDraft(
     val amount: Double get() = quantity * rate
 }
 
+data class DailySalesTrend(
+    val dateMillis: Long,
+    val dayLabel: String, // "Mon", "Tue"
+    val dateStr: String,  // "01/10"
+    val salesAmount: Double,
+    val paidAmount: Double,
+    val orderCount: Int
+)
+
 data class DashboardSummary(
     val todayDateStr: String,
     val todayCustomersCount: Int,
@@ -52,14 +60,17 @@ data class DashboardSummary(
     val pendingCustomersCount: Int
 )
 
-data class LedgerRow(
-    val date: Long,
-    val orderNumber: String,
-    val description: String,
-    val totalAmount: Double,
-    val paidAmount: Double,
-    val balanceAmount: Double,
+data class LedgerItemDisplay(
+    val entry: CustomerLedgerEntry,
     val runningBalance: Double
+)
+
+data class CustomerLedgerData(
+    val customerSummary: CustomerWithSummary?,
+    val entries: List<LedgerItemDisplay>,
+    val totalDebit: Double,
+    val totalCredit: Double,
+    val netBalance: Double
 )
 
 class TeaStallViewModel(application: Application) : AndroidViewModel(application) {
@@ -69,8 +80,112 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
         customerDao = database.customerDao(),
         menuItemDao = database.menuItemDao(),
         orderDao = database.orderDao(),
-        paymentDao = database.paymentDao()
+        paymentDao = database.paymentDao(),
+        customerLedgerDao = database.customerLedgerDao(),
+        inventoryDao = database.inventoryDao()
     )
+
+    // Supabase Cloud Backend Sync
+    val supabaseConfig = com.example.data.supabase.SupabaseConfig(application)
+    val supabaseSyncService = com.example.data.supabase.SupabaseSyncService(supabaseConfig, database)
+
+    // Inventory & Raw Material Tracking
+    val allInventoryItems: StateFlow<List<InventoryItem>> = repository.allInventoryItems
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val lowStockItems: StateFlow<List<InventoryItem>> = repository.lowStockItems
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentInventoryLogs: StateFlow<List<InventoryConsumptionLog>> = repository.recentInventoryLogs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun triggerAutoSync() {
+        if (supabaseConfig.isConfigured && supabaseConfig.autoSyncEnabled) {
+            viewModelScope.launch {
+                try {
+                    supabaseSyncService.syncAllData()
+                } catch (_: Exception) {
+                    // Non-blocking background sync
+                }
+            }
+        }
+    }
+
+    fun syncWithSupabase(onComplete: (com.example.data.supabase.SupabaseSyncResult) -> Unit) {
+        viewModelScope.launch {
+            val result = supabaseSyncService.syncAllData()
+            onComplete(result)
+        }
+    }
+
+    fun recordDailyConsumption(
+        itemId: Long,
+        quantity: Double,
+        notes: String,
+        onComplete: () -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.recordConsumption(itemId, quantity, notes)
+            triggerAutoSync()
+            onComplete()
+        }
+    }
+
+    fun recordRestock(
+        itemId: Long,
+        quantity: Double,
+        notes: String,
+        onComplete: () -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.recordRestock(itemId, quantity, notes)
+            triggerAutoSync()
+            onComplete()
+        }
+    }
+
+    fun saveInventoryItem(
+        id: Long = 0,
+        name: String,
+        unit: String,
+        currentStock: Double,
+        threshold: Double,
+        costPerUnit: Double,
+        onComplete: () -> Unit
+    ) {
+        viewModelScope.launch {
+            if (id == 0L) {
+                repository.insertInventoryItem(
+                    InventoryItem(
+                        name = name.trim(),
+                        unit = unit.trim(),
+                        currentStock = currentStock,
+                        lowStockThreshold = threshold,
+                        costPerUnit = costPerUnit
+                    )
+                )
+            } else {
+                repository.updateInventoryItem(
+                    InventoryItem(
+                        id = id,
+                        name = name.trim(),
+                        unit = unit.trim(),
+                        currentStock = currentStock,
+                        lowStockThreshold = threshold,
+                        costPerUnit = costPerUnit,
+                        lastUpdated = System.currentTimeMillis()
+                    )
+                )
+            }
+            onComplete()
+        }
+    }
+
+    fun deleteInventoryItem(item: InventoryItem) {
+        viewModelScope.launch {
+            repository.deleteInventoryItem(item)
+        }
+    }
 
     // Navigation state
     private val _currentScreen = MutableStateFlow(AppScreen.DASHBOARD)
@@ -127,35 +242,82 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
         _currentScreen.value = AppScreen.CUSTOMER_LEDGER
     }
 
-    // Customer Ledger Calculation
-    val currentCustomerLedger: StateFlow<Triple<CustomerWithSummary?, List<LedgerRow>, List<Payment>>> =
-        combine(_selectedCustomerId, customersWithSummary, allOrders, allOrderItems, allPayments) { custId, custList, orders, items, payments ->
-            if (custId == null) return@combine Triple(null, emptyList(), emptyList())
-            val customerSum = custList.find { it.customer.id == custId }
-            val custOrders = orders.filter { it.customerId == custId }.sortedBy { it.orderDate }
-            val custPayments = payments.filter { it.customerId == custId }.sortedBy { it.paymentDate }
+    // Reactive Customer Ledger Flow with Credit & Debit computation
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentCustomerLedgerData: StateFlow<CustomerLedgerData> =
+        _selectedCustomerId.flatMapLatest { custId ->
+            if (custId == null) {
+                flowOf(CustomerLedgerData(null, emptyList(), 0.0, 0.0, 0.0))
+            } else {
+                combine(
+                    customersWithSummary,
+                    repository.getLedgerForCustomer(custId)
+                ) { custList, rawEntries ->
+                    val customerSum = custList.find { it.customer.id == custId }
+                    val sorted = rawEntries.sortedWith(compareBy({ it.date }, { it.id }))
 
-            var runBal = 0.0
-            val ledgerRows = custOrders.map { ord ->
-                val ordItems = items.filter { it.orderId == ord.id }
-                val desc = if (ordItems.isNotEmpty()) {
-                    ordItems.joinToString(" + ") { "${it.itemName} (${it.quantity})" }
-                } else {
-                    "Order #${ord.orderNumber}"
+                    var runBal = 0.0
+                    var totDebit = 0.0
+                    var totCredit = 0.0
+
+                    val displayList = sorted.map { entry ->
+                        if (entry.transactionType.equals("DEBIT", ignoreCase = true)) {
+                            runBal += entry.amount
+                            totDebit += entry.amount
+                        } else {
+                            runBal -= entry.amount
+                            totCredit += entry.amount
+                        }
+                        LedgerItemDisplay(entry = entry, runningBalance = runBal)
+                    }
+
+                    CustomerLedgerData(
+                        customerSummary = customerSum,
+                        entries = displayList.reversed(), // Latest transactions first in UI
+                        totalDebit = totDebit,
+                        totalCredit = totCredit,
+                        netBalance = (totDebit - totCredit)
+                    )
                 }
-                runBal += ord.balanceAmount
-                LedgerRow(
-                    date = ord.orderDate,
-                    orderNumber = ord.orderNumber,
-                    description = desc,
-                    totalAmount = ord.totalAmount,
-                    paidAmount = ord.paidAmount,
-                    balanceAmount = ord.balanceAmount,
-                    runningBalance = runBal
-                )
             }
-            Triple(customerSum, ledgerRows, custPayments)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Triple(null, emptyList(), emptyList()))
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            CustomerLedgerData(null, emptyList(), 0.0, 0.0, 0.0)
+        )
+
+    fun addDebitTransaction(
+        customerId: Long,
+        amount: Double,
+        title: String,
+        details: String,
+        onComplete: () -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.addLedgerDebit(customerId, amount, title, details)
+            onComplete()
+        }
+    }
+
+    fun addCreditTransaction(
+        customerId: Long,
+        amount: Double,
+        title: String,
+        details: String,
+        paymentMode: String,
+        onComplete: () -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.addLedgerCredit(customerId, amount, title, details, paymentMode)
+            onComplete()
+        }
+    }
+
+    fun deleteLedgerEntry(entry: CustomerLedgerEntry) {
+        viewModelScope.launch {
+            repository.deleteLedgerEntry(entry)
+        }
+    }
 
     // Dashboard Statistics
     val dashboardSummary: StateFlow<DashboardSummary> =
@@ -167,7 +329,6 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
             val todayOrders = orders.filter { it.orderDate in startOfToday..endOfToday }
             val todayPayments = payments.filter { it.paymentDate in startOfToday..endOfToday }
 
-            // Distinct customers active today
             val todayCustIds = (todayOrders.map { it.customerId } + todayPayments.map { it.customerId }).toSet()
 
             val todaySales = todayOrders.sumOf { it.totalAmount }
@@ -201,6 +362,40 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
                 pendingCustomersCount = 0
             )
         )
+
+    // 7-Day Daily Sales & Revenue Trend
+    val weeklySalesTrends: StateFlow<List<DailySalesTrend>> =
+        combine(allOrders, allPayments) { orders, payments ->
+            val result = mutableListOf<DailySalesTrend>()
+            val dayFormat = java.text.SimpleDateFormat("EEE", java.util.Locale.getDefault())
+            val dateFormat = java.text.SimpleDateFormat("dd/MM", java.util.Locale.getDefault())
+
+            for (i in 6 downTo 0) {
+                val targetCal = Calendar.getInstance().apply {
+                    add(Calendar.DAY_OF_YEAR, -i)
+                }
+                val startOfDay = FormatUtils.getStartOfDay(targetCal.timeInMillis)
+                val endOfDay = FormatUtils.getEndOfDay(targetCal.timeInMillis)
+
+                val dayOrders = orders.filter { it.orderDate in startOfDay..endOfDay }
+                val dayPayments = payments.filter { it.paymentDate in startOfDay..endOfDay }
+
+                val sales = dayOrders.sumOf { it.totalAmount }
+                val paid = dayPayments.sumOf { it.amount }
+
+                result.add(
+                    DailySalesTrend(
+                        dateMillis = targetCal.timeInMillis,
+                        dayLabel = dayFormat.format(targetCal.time),
+                        dateStr = dateFormat.format(targetCal.time),
+                        salesAmount = sales,
+                        paidAmount = paid,
+                        orderCount = dayOrders.size
+                    )
+                )
+            }
+            result
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Order Entry Draft State
     private val _orderCustomerId = MutableStateFlow<Long?>(null)
@@ -293,7 +488,6 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
             val custMob = _orderCustomerMobile.value
 
             if (custId == null) {
-                // Find or create customer
                 val existing = customersWithSummary.value.find {
                     it.customer.name.equals(custName, ignoreCase = true) ||
                             (custMob.isNotBlank() && it.customer.mobile == custMob)
@@ -354,6 +548,7 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
             )
 
             clearOrderForm()
+            triggerAutoSync()
             onComplete(createdId)
         }
     }
@@ -393,6 +588,7 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
                     )
                 )
             }
+            triggerAutoSync()
             onComplete()
         }
     }
@@ -468,6 +664,7 @@ class TeaStallViewModel(application: Application) : AndroidViewModel(application
                     notes = notes
                 )
             )
+            triggerAutoSync()
             onComplete()
         }
     }
